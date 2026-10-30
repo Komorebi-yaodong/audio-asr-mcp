@@ -1,6 +1,6 @@
 {
   "name": "audio-asr-mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "将本地音频转为文本或 SRT 的 Whisper MCP 服务，支持文件输出和纯文本回退。",
   "type": "module",
   "bin": {

@@ -75,7 +75,7 @@ export function decodeTranscript(body: string, contentType: string, requested: O
   }
 
   if (requested === 'srt') {
-    const srt = normalizeSrt(text) ?? (isObject(payload) ? srtFromSegments(payload.segments) : undefined);
+    const srt = (isObject(payload) ? srtFromSegments(payload.segments) : undefined) ?? normalizeSrt(text);
     if (srt) return { content: srt, format: 'srt' };
     return { content: text, format: 'text', fallbackReason: '未获得可用字幕，已返回纯文本。' };
   }

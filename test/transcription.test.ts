@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { truncate, writeFile } from 'node:fs/promises';
+import { readFile, truncate, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { loadConfig } from '../src/config.js';
 import { decodeTranscript, normalizeSrt } from '../src/subtitles.js';
 import { transcribe } from '../src/transcription.js';
-import { fixture, mockApi, sampleSrt } from './helpers.js';
+import { fixture, mockApi, sampleSrt, sampleVerbose } from './helpers.js';
 
 function config(baseUrl: string) {
   return loadConfig({ AUDIO_ASR_API_KEY: 'test-secret', AUDIO_ASR_BASE_URL: baseUrl });
@@ -39,32 +39,72 @@ test('Whisper multipart upload returns multilingual text and passes optional fie
   assert.equal(call.url, '/v1/audio/transcriptions');
   assert.equal(call.authorization, 'Bearer test-secret');
   assert.equal(call.form.get('model'), 'whisper-1');
-  assert.equal(call.form.get('response_format'), 'json');
+  assert.equal(call.form.get('response_format'), 'verbose_json');
+  assert.equal(call.form.has('temperature'), false);
   assert.equal(call.form.get('language'), 'zh');
   assert.equal(call.form.get('prompt'), 'OpenAI');
-  assert.equal((call.form.get('file') as File).name, '测试录音.wav');
+  const uploaded = call.form.get('file') as File;
+  assert.equal(uploaded.name, '测试录音.wav');
+  assert.deepEqual(Buffer.from(await uploaded.arrayBuffer()), await readFile(files.audioPath));
 });
 
-test('native SRT stays SRT and does not make a second request', async t => {
+test('WhisperTTS-style verbose segments generate SRT in one request without language or prompt', async t => {
   const files = await fixture(); t.after(files.cleanup);
-  const api = await mockApi(() => ({ body: sampleSrt, contentType: 'text/plain' })); t.after(api.close);
+  const api = await mockApi(() => ({ body: JSON.stringify(sampleVerbose) })); t.after(api.close);
   assert.deepEqual(await transcribe({ audio_path: files.audioPath, format: 'srt' }, config(api.baseUrl)), { content: sampleSrt, format: 'srt' });
-  assert.equal(api.calls[0]!.form.get('response_format'), 'srt');
+  assert.equal(api.calls[0]!.form.get('response_format'), 'verbose_json');
   assert.equal(api.calls.length, 1);
   assert.equal(api.calls[0]!.form.has('prompt'), false);
   assert.equal(api.calls[0]!.form.has('language'), false);
+  assert.equal(api.calls[0]!.form.has('temperature'), false);
 });
 
-test('SRT rejection retries once as JSON and returns text', async t => {
+test('text reads top-level text while SRT reads segment text without rewriting', async t => {
+  const files = await fixture(); t.after(files.cleanup);
+  const payload = { text: 'トップレベルの全文', segments: [{ start: 0, end: 10.4, text: ' ご提供いただいたリンクに基づき' }] };
+  const api = await mockApi(() => ({ body: JSON.stringify(payload) })); t.after(api.close);
+  const text = await transcribe({ audio_path: files.audioPath }, config(api.baseUrl));
+  const srt = await transcribe({ audio_path: files.audioPath, format: 'srt' }, config(api.baseUrl));
+  assert.equal(text.content, payload.text);
+  assert.equal(srt.content, '1\n00:00:00,000 --> 00:00:10,400\nご提供いただいたリンクに基づき\n');
+  assert.deepEqual(api.calls.map(call => call.form.get('response_format')), ['verbose_json', 'verbose_json']);
+});
+
+test('native SRT is tried after verbose_json is explicitly unsupported', async t => {
   const files = await fixture(); t.after(files.cleanup);
   const api = await mockApi((_call, index) => index === 0
-    ? { status: 400, body: JSON.stringify({ error: { param: 'response_format', message: 'srt is not supported; only json is supported' } }) }
+    ? { status: 400, body: JSON.stringify({ error: { param: 'response_format', message: 'verbose_json is not supported' } }) }
+    : { body: sampleSrt, contentType: 'text/plain' }); t.after(api.close);
+  assert.deepEqual(await transcribe({ audio_path: files.audioPath, format: 'srt' }, config(api.baseUrl)), { content: sampleSrt, format: 'srt' });
+  assert.deepEqual(api.calls.map(call => call.form.get('response_format')), ['verbose_json', 'srt']);
+});
+
+test('only-json API safely falls back after rejecting both subtitle formats', async t => {
+  const files = await fixture(); t.after(files.cleanup);
+  const api = await mockApi((_call, index) => index < 2
+    ? { status: 422, body: JSON.stringify({ error: { param: 'response_format', message: 'Invalid response_format; only json is supported' } }) }
     : { body: JSON.stringify({ text: '纯文本结果' }) }); t.after(api.close);
   const result = await transcribe({ audio_path: files.audioPath, format: 'srt' }, config(api.baseUrl));
   assert.equal(result.format, 'text');
   assert.equal(result.content, '纯文本结果');
   assert.ok(result.fallbackReason);
-  assert.deepEqual(api.calls.map(call => call.form.get('response_format')), ['srt', 'json']);
+  assert.deepEqual(api.calls.map(call => call.form.get('response_format')), ['verbose_json', 'srt', 'json']);
+});
+
+test('text falls back to JSON for FastAPI response_format validation errors', async t => {
+  const files = await fixture(); t.after(files.cleanup);
+  const api = await mockApi((_call, index) => index === 0
+    ? { status: 422, body: JSON.stringify({ detail: [{ loc: ['body', 'response_format'], type: 'literal_error', msg: "Input should be 'json'", input: 'verbose_json' }] }) }
+    : { body: JSON.stringify({ text: '兼容输出' }) }); t.after(api.close);
+  assert.equal((await transcribe({ audio_path: files.audioPath }, config(api.baseUrl))).content, '兼容输出');
+  assert.deepEqual(api.calls.map(call => call.form.get('response_format')), ['verbose_json', 'json']);
+});
+
+test('an exhausted format negotiation returns a useful error instead of looping', async t => {
+  const files = await fixture(); t.after(files.cleanup);
+  const api = await mockApi(() => ({ status: 400, body: JSON.stringify({ error: { param: 'response_format', message: 'Unsupported response_format' } }) })); t.after(api.close);
+  await assert.rejects(transcribe({ audio_path: files.audioPath, format: 'srt' }, config(api.baseUrl)), /response_format/u);
+  assert.equal(api.calls.length, 3);
 });
 
 test('successful plain response falls back without retrying', async t => {
@@ -96,6 +136,46 @@ test('API errors do not leak remote messages or retry unrelated failures', async
   });
   assert.equal(api.calls.length, 1);
 });
+
+test('non-format 422 is not retried and reports a sanitized field error', async t => {
+  const files = await fixture(); t.after(files.cleanup);
+  const api = await mockApi(() => ({ status: 422, body: JSON.stringify({ detail: [{ loc: ['body', 'language'], type: 'value_error', msg: 'Invalid language code', input: 'private input' }] }) })); t.after(api.close);
+  await assert.rejects(transcribe({ audio_path: files.audioPath, format: 'srt', language: 'invalid' }, config(api.baseUrl)), error => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /422.*body\.language.*Invalid language code/u);
+    assert.doesNotMatch(error.message, /private input/u);
+    return true;
+  });
+  assert.equal(api.calls.length, 1);
+});
+
+test('400 validation errors redact key, audio path, prompt and bearer credentials', async t => {
+  const files = await fixture(); t.after(files.cleanup);
+  const prompt = 'private-context';
+  const message = `Invalid audio: test-secret ${files.audioPath} ${prompt} Bearer leaked-value gsk_otherkey https://example.com/?token=secret`;
+  const api = await mockApi(() => ({ status: 400, body: JSON.stringify({ error: { param: 'file', code: 'invalid_audio', message } }) })); t.after(api.close);
+  await assert.rejects(transcribe({ audio_path: files.audioPath, prompt }, config(api.baseUrl)), error => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /Invalid audio/u);
+    assert.match(error.message, /invalid_audio/u);
+    for (const secret of ['test-secret', files.audioPath, prompt, 'leaked-value', 'gsk_otherkey', 'token=secret']) assert.ok(!error.message.includes(secret));
+    return true;
+  });
+  assert.equal(api.calls.length, 1);
+});
+
+test('403 does not assert model permissions and HTML errors are not echoed', async t => {
+  const files = await fixture(); t.after(files.cleanup);
+  const api = await mockApi(() => ({ status: 403, contentType: 'text/html', body: '<html>private challenge</html>' })); t.after(api.close);
+  await assert.rejects(transcribe({ audio_path: files.audioPath }, config(api.baseUrl)), error => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /代理\/网络出口/u);
+    assert.doesNotMatch(error.message, /private challenge|当前 Key 或模型没有访问权限/u);
+    return true;
+  });
+  assert.equal(api.calls.length, 1);
+});
+
 
 test('local files are validated before network requests', async t => {
   const files = await fixture(); t.after(files.cleanup);

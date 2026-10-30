@@ -2,8 +2,9 @@ import { openAsBlob } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { Config } from './config.js';
+import { createApiError, isResponseFormatUnsupported } from './api-errors.js';
 import { decodeTranscript } from './subtitles.js';
-import type { OutputFormat, TranscribeInput, Transcript } from './types.js';
+import type { TranscribeInput, Transcript } from './types.js';
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 10 * 60 * 1_000;
@@ -17,27 +18,6 @@ export interface TranscriptionOptions {
   signal?: AbortSignal | undefined;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
-}
-
-function formatUnsupported(status: number, body: string): boolean {
-  if (status !== 400 && status !== 422) return false;
-  let payload: unknown;
-  try { payload = JSON.parse(body); } catch { return false; }
-  if (typeof payload !== 'object' || payload === null || !('error' in payload)) return false;
-  const error = payload.error;
-  if (typeof error !== 'object' || error === null) return false;
-  const fields = error as Record<string, unknown>;
-  const message = typeof fields.message === 'string' ? fields.message : '';
-  return (fields.param === 'response_format' || /response[_ ]format|\bsrt\b/iu.test(message))
-    && /unsupported|not supported|does not support|invalid|not allowed|must be|only|supported.*json/iu.test(message);
-}
-
-function apiError(status: number): Error {
-  const detail: Record<number, string> = {
-    401: '请检查 API Key。', 403: '当前 Key 或模型没有访问权限。',
-    413: '音频文件超过接口限制。', 429: '请求受限或余额不足，请稍后再试。',
-  };
-  return new Error(`转写接口请求失败（HTTP ${status}）。${detail[status] ?? '请检查服务地址、模型和请求参数。'}`);
 }
 
 export async function transcribe(
@@ -59,38 +39,45 @@ export async function transcribe(
   const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
   const fetchImpl = options.fetchImpl ?? fetch;
 
-  async function request(format: OutputFormat): Promise<Transcript> {
-    const form = new FormData();
-    form.set('file', await openAsBlob(input.audio_path, { type: mimeType }), path.basename(input.audio_path));
-    form.set('model', config.model);
-    form.set('response_format', format === 'srt' ? 'srt' : 'json');
-    if (input.language) form.set('language', input.language);
-    if (input.prompt) form.set('prompt', input.prompt);
+  // Match WhisperTTS: one verbose response supplies either text or segment-based subtitles.
+  // Other formats are tried only when the API explicitly rejects response_format.
+  const formats = requested === 'srt'
+    ? ['verbose_json', 'srt', 'json'] as const
+    : ['verbose_json', 'json'] as const;
 
-    const response = await fetchImpl(config.endpoint, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${config.apiKey}` },
-      body: form,
-      signal,
-      redirect: 'error',
-    });
-    const body = await response.text();
-    if (!response.ok) {
-      if (format === 'srt' && formatUnsupported(response.status, body)) {
-        const fallback = await request('text');
-        return { ...fallback, fallbackReason: '当前模型未提供 SRT，已返回纯文本。' };
+  async function request(): Promise<Transcript> {
+    for (const [index, format] of formats.entries()) {
+      const form = new FormData();
+      form.set('file', await openAsBlob(input.audio_path, { type: mimeType }), path.basename(input.audio_path));
+      form.set('model', config.model);
+      form.set('response_format', format);
+      if (input.language) form.set('language', input.language);
+      if (input.prompt) form.set('prompt', input.prompt);
+
+      const response = await fetchImpl(config.endpoint, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${config.apiKey}` },
+        body: form,
+        signal,
+        redirect: 'error',
+      });
+      const body = await response.text();
+      if (!response.ok) {
+        if (index < formats.length - 1 && isResponseFormatUnsupported(response.status, body)) continue;
+        throw createApiError(response.status, body, [config.apiKey, input.audio_path, input.prompt ?? '']);
       }
-      throw apiError(response.status);
+      const contentType = response.headers.get('content-type') ?? '';
+      if (contentType.includes('html') || /^\s*<!doctype html|^\s*<html/iu.test(body)) {
+        throw new Error('转写接口返回了网页而非转写结果，请检查服务地址。');
+      }
+      // Reuse a successful response even if it lacks timestamps; never re-transcribe it.
+      return decodeTranscript(body, contentType, requested);
     }
-    const contentType = response.headers.get('content-type') ?? '';
-    if (contentType.includes('html') || /^\s*<!doctype html|^\s*<html/iu.test(body)) {
-      throw new Error('转写接口返回了网页而非转写结果，请检查服务地址。');
-    }
-    return decodeTranscript(body, contentType, format);
+    throw new Error('转写接口没有返回结果。');
   }
 
   try {
-    return await request(requested);
+    return await request();
   } catch (error) {
     if (options.signal?.aborted) throw new Error('转写已取消。');
     if (timeout.aborted) throw new Error('转写请求超时，请稍后重试。');

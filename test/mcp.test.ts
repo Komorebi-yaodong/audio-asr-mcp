@@ -8,15 +8,15 @@ import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { metadata } from '../src/metadata.js';
-import { fixture, mockApi, sampleSrt } from './helpers.js';
+import { fixture, mockApi, sampleSrt, sampleVerbose } from './helpers.js';
 
 const entry = fileURLToPath(new URL('../dist/index.js', import.meta.url));
 
 test('compiled stdio server supports list/call, files, fallback and validation', async t => {
   const files = await fixture(); t.after(files.cleanup);
-  const api = await mockApi(call => call.form.get('response_format') === 'srt'
-    ? { body: sampleSrt, contentType: 'text/plain' }
-    : { body: JSON.stringify({ text: 'MCP 测试文本' }) }); t.after(api.close);
+  const api = await mockApi((_call, index) => index === 3
+    ? { status: 422, body: JSON.stringify({ detail: [{ loc: ['body', 'language'], msg: 'Invalid language code', input: 'private-context' }] }) }
+    : { body: JSON.stringify({ ...sampleVerbose, text: 'MCP 测试文本' }) }); t.after(api.close);
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [entry],
@@ -51,7 +51,17 @@ test('compiled stdio server supports list/call, files, fallback and validation',
   assert.equal(invalid.isError, true);
   const badFormat = await client.callTool({ name: 'transcribe_audio', arguments: { audio_path: files.audioPath, format: 'pdf' } });
   assert.equal(badFormat.isError, true);
-  assert.equal(api.calls.length, 3);
+  const apiFailure = await client.callTool({ name: 'transcribe_audio', arguments: { audio_path: files.audioPath } });
+  assert.equal(apiFailure.isError, true);
+  assert.match(JSON.stringify(apiFailure.content), /body\.language.*Invalid language code/u);
+  assert.doesNotMatch(JSON.stringify(apiFailure.content), /private-context/u);
+  assert.equal(api.calls.length, 4);
+  for (const call of api.calls) {
+    assert.equal(call.form.get('response_format'), 'verbose_json');
+    assert.equal(call.form.has('language'), false);
+    assert.equal(call.form.has('prompt'), false);
+    assert.equal(call.form.has('temperature'), false);
+  }
   assert.equal(stderr, '');
 });
 

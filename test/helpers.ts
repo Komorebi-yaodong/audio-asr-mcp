@@ -64,4 +64,14 @@ export async function mockApi(handler: (call: ApiCall, index: number) => ApiRepl
   };
 }
 
+export const sampleVerbose = {
+  text: '你好，世界。 Whisper 转写测试。',
+  language: 'chinese',
+  segments: [
+    { id: 0, start: 0, end: 1.25, text: ' 你好，世界。' },
+    { id: 1, start: 1.5, end: 3, text: ' Whisper 转写测试。' },
+  ],
+};
+
+
 export const sampleSrt = '1\n00:00:00,000 --> 00:00:01,250\n你好，世界。\n\n2\n00:00:01,500 --> 00:00:03,000\nWhisper 转写测试。\n';
