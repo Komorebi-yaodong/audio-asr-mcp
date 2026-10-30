@@ -16,9 +16,9 @@ async function main(): Promise<void> {
 stdio MCP 服务，将本地音频转为文本 / SRT。
 
 环境变量：
-  AUDIO_TRANSCRIPTION_BASE_URL  默认 https://api.openai.com/v1
-  AUDIO_TRANSCRIPTION_API_KEY   必填
-  AUDIO_TRANSCRIPTION_MODEL     默认 whisper-1
+  AUDIO_ASR_BASE_URL  默认 https://api.openai.com/v1
+  AUDIO_ASR_API_KEY   必填
+  AUDIO_ASR_MODEL     默认 whisper-1
 
 由 MCP 客户端启动本命令；工具名：transcribe_audio。
 `);

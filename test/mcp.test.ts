@@ -20,7 +20,7 @@ test('compiled stdio server supports list/call, files, fallback and validation',
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [entry],
-    env: { AUDIO_TRANSCRIPTION_API_KEY: 'test-secret', AUDIO_TRANSCRIPTION_BASE_URL: api.baseUrl, AUDIO_TRANSCRIPTION_MODEL: 'whisper-1' },
+    env: { AUDIO_ASR_API_KEY: 'test-secret', AUDIO_ASR_BASE_URL: api.baseUrl, AUDIO_ASR_MODEL: 'whisper-1' },
     stderr: 'pipe',
   });
   let stderr = '';
@@ -57,9 +57,9 @@ test('compiled stdio server supports list/call, files, fallback and validation',
 
 test('CLI help/version need no credentials; missing key exits without stdout noise', async () => {
   const run = promisify(execFile);
-  const env = { ...process.env }; delete env.AUDIO_TRANSCRIPTION_API_KEY;
+  const env = { ...process.env }; delete env.AUDIO_ASR_API_KEY;
   const help = await run(process.execPath, [entry, '--help'], { env });
-  assert.match(help.stdout, /AUDIO_TRANSCRIPTION_API_KEY/u);
+  assert.match(help.stdout, /AUDIO_ASR_API_KEY/u);
   const version = await run(process.execPath, [entry, '--version'], { env });
   assert.equal(version.stdout.trim(), metadata.version);
   await assert.rejects(run(process.execPath, [entry], { env }), error => {

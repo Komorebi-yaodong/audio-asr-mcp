@@ -8,12 +8,21 @@ import { transcribe } from '../src/transcription.js';
 import { fixture, mockApi, sampleSrt } from './helpers.js';
 
 function config(baseUrl: string) {
-  return loadConfig({ AUDIO_TRANSCRIPTION_API_KEY: 'test-secret', AUDIO_TRANSCRIPTION_BASE_URL: baseUrl });
+  return loadConfig({ AUDIO_ASR_API_KEY: 'test-secret', AUDIO_ASR_BASE_URL: baseUrl });
 }
 
 test('configuration defaults and full endpoint', () => {
-  assert.equal(loadConfig({ AUDIO_TRANSCRIPTION_API_KEY: 'x' }).endpoint, 'https://api.openai.com/v1/audio/transcriptions');
-  assert.equal(loadConfig({ AUDIO_TRANSCRIPTION_API_KEY: 'x' }).model, 'whisper-1');
+  assert.equal(loadConfig({ AUDIO_ASR_API_KEY: 'x' }).endpoint, 'https://api.openai.com/v1/audio/transcriptions');
+  assert.equal(loadConfig({ AUDIO_ASR_API_KEY: 'x' }).model, 'whisper-1');
+  assert.deepEqual(loadConfig({
+    AUDIO_ASR_BASE_URL: 'https://example.com/custom/v1',
+    AUDIO_ASR_API_KEY: 'custom-key',
+    AUDIO_ASR_MODEL: 'custom-whisper',
+  }), {
+    endpoint: 'https://example.com/custom/v1/audio/transcriptions',
+    apiKey: 'custom-key',
+    model: 'custom-whisper',
+  });
   assert.equal(config('https://example.com/v1/audio/transcriptions/').endpoint, 'https://example.com/v1/audio/transcriptions');
   assert.throws(() => loadConfig({}), /API_KEY/u);
   for (const url of ['file:///tmp', 'https://name:secret@example.com/v1', 'https://example.com/?key=x']) {
