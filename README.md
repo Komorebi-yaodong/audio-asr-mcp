@@ -28,7 +28,7 @@
 }
 ```
 
-部分 Windows 客户端需将 `command` 改为 `npx.cmd`。如需固定版本，可在 `args` 中使用 `audio-asr-mcp@0.1.0`。
+部分 Windows 客户端需将 `command` 改为 `npx.cmd`。如需固定版本，可在 `args` 中使用 `audio-asr-mcp@0.1.1`。
 
 配置完成后，可在客户端中提出请求：
 
