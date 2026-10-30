@@ -1,0 +1,14 @@
+# AI Context & Local Progress
+进度.md
+项目AGENT.md
+
+# Dependencies and generated files
+node_modules/
+dist/
+coverage/
+*.tgz
+
+# Local credentials
+.env
+.env.*
+!.env.example

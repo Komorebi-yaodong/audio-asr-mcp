@@ -1,0 +1,45 @@
+{
+  "name": "audio-asr-mcp",
+  "version": "0.1.0",
+  "description": "将本地音频转为文本或 SRT 的 Whisper MCP 服务，支持文件输出和纯文本回退。",
+  "type": "module",
+  "bin": {
+    "audio-asr-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    ".env.example"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "test": "tsx --test test/*.test.ts",
+    "check": "pnpm typecheck && pnpm build && pnpm test",
+    "prepack": "pnpm build"
+  },
+  "keywords": [
+    "mcp",
+    "whisper",
+    "transcription",
+    "audio",
+    "srt",
+    "model-context-protocol"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
